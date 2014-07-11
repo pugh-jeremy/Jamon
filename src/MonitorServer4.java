@@ -4,6 +4,26 @@ http://www.oracle.com/technetwork/java/javasebusiness/downloads/java-archive-dow
 http://www.oracle.com/technetwork/java/javasebusiness/downloads/java-archive-downloads-java-plat-419418.html#jaf-1.1.1-fcs-oth-JPR
 
 common usage: java MonitorServer 9898
+
+C:/Windows/Temp/health.txt stores ping and port check results that can be done from the local server.  
+These are done via the LocalMonitor class below
+
+C:/Windows/Temp/healthRemote.txt stores memory/hd/cpu usage% which depends on remote client to connect to this server.
+These checks are done via the Monitor class which launches the socket that listens for client connections
+
+C:/Windows/Temp/checklist.txt stores the local server (results written to health.txt) checks the user wants the service to perform
+Here is example contents of a valid checklist.txt file:
+mainDB:4.34.95.53
+mainDB:4.34.95.53:8000
+mainDB:4.34.95.53:10281  
+mainDB:4.34.95.53:10322
+mainDB:4.34.95.53:10222
+mainDB:4.34.95.53:22
+mainDB:4.34.95.53:333
+failoverDB:4.34.95.51
+failoverDB:4.34.95.51:22
+GWR3:4.34.95.49
+
 */
 
 import java.io.*;
@@ -40,9 +60,19 @@ import javax.mail.internet.MimeMultipart;
 import javax.mail.Authenticator;
 import javax.mail.PasswordAuthentication;
 import javax.mail.Session;
+
+//take out clientNumber and fix and close any sockets/files that need closing
+// try moving instantiation outside of LocalMonitor run() and inside LocalMonitor class, understand the differences
+// log errors and connections to monitorlog.txt
+// read ips and ports to ping/connect to from File
+// break the try/catch sections of LocalMonitor into smaller portions with logging functionality
+
+
  
-public class MonitorServer3 {
+public class MonitorServer4 {
     public static void main(String[] args) throws IOException, InterruptedException {
+                    
+
       System.out.println("The monitor server is running.");
       int clientNumber = 0;
       ServerSocket listener = new ServerSocket(9898);
@@ -61,61 +91,33 @@ public class MonitorServer3 {
       }   
 
       public void run() {
-
-        final String fromEmail = "jeremy.pugh@adrevolution.com"; //requires valid gmail id
-        final String password = "CuW<Yuq9"; // correct password for gmail id
-        final String toEmail = "jeremy.pugh@adrevolution.com"; // can be any email id 
-
-        Properties props = new Properties();
-        props.put("mail.smtp.host", "smtp.gmail.com"); //SMTP Host
-        props.put("mail.smtp.port", "587"); //TLS Port
-        props.put("mail.smtp.auth", "true"); //enable authentication
-        props.put("mail.smtp.starttls.enable", "true"); //enable STARTTLS
-        //create Authenticator object to pass in Session.getInstance argument
-        Authenticator auth = new Authenticator() {
-          //override the getPasswordAuthentication method
-          protected PasswordAuthentication getPasswordAuthentication() {
-            return new PasswordAuthentication(fromEmail, password);
-          }
-        };
-        Session session = Session.getInstance(props, auth);
-
 	SimpleDateFormat sdf = new SimpleDateFormat("dd-M-yyyy hh:mm:ss");
-        //int portNumber = Integer.parseInt(args[0]);
+        String date = sdf.format(new Date()); 
+        System.out.println(date);
 
         try {
           File file = new File("C:/Windows/Temp/health.txt");
           PrintWriter fileOutput = new PrintWriter(file);
           Scanner input = new Scanner(file);
-        
-          Boolean result;
-          result=checkPing("4.34.95.53");
-          fileOutput.print("pinging-main-DB-4.34.95.53,result:");
-          fileOutput.println(result);
-          fileOutput.println("4.34.95.53:8000,result:" + checkPort("4.34.95.53",8000));
-          fileOutput.println("4.34.95.53:10281,result:" + checkPort("4.34.95.53",10281));  
-          fileOutput.println("4.34.95.53:10322,result:" + checkPort("4.34.95.53",10322));
-          fileOutput.println("4.34.95.53:10222,result:" + checkPort("4.34.95.53",10222));
-          fileOutput.println("4.34.95.53:22,result:" + checkPort("4.34.95.53",22));
 
-          result=checkPing("4.34.95.51");
-          fileOutput.print("pinging-backup-server-4.34.95.51,result:");
-          fileOutput.println(result);
-          fileOutput.println("4.34.95.51:22,result:" + checkPort("4.34.95.51",22));
-
-          result=checkPing("4.34.95.53");
-          fileOutput.print("pinging-router-GWR3-4.34.95.49,result:");
-          fileOutput.println(result);
+          //as the method below states, this will support reading checks from file as opposed to hard coding
+          //however, this method is currently not implemented         
+          readCheckList();
+         
+          //run ping/port check tests and write results to health.txt file 
+          runChecks(fileOutput);        
 
           fileOutput.flush();
+          fileOutput.close();
                         
           String emailText = " ";
           String line = "";
+          //parse contents of health file and alert if ping/port checks failed (line contains false)
           while (input.hasNext()) {
             line = input.next();
             if (line.contains("false"))
               emailText = emailText + "\n" + line;
-          }
+          } 
 
           //parse contents of healthRemote file and alert if over threshhold
           File fileRemote = new File("C:/Windows/Temp/healthRemote.txt");
@@ -134,18 +136,17 @@ public class MonitorServer3 {
                 //System.out.println(descriptor + ":" + value + ",result:false");
                 emailText = emailText + "\n" + descriptor + ":" + value + ",result:false"; 
               }
-              //else {
-                //System.out.println(descriptor + ":" + value + ",result:true");
-              //}
             }//ends inner while
           }//ends outer while
-        
-          String date = sdf.format(new Date()); 
-	  System.out.println(date);
 
+          inputRemote.close();
+        
           System.out.println(emailText);
-          if (emailText != " ")
-            sendEmail(session, toEmail, "Alert - System Issue", emailText);
+          if (emailText != " ") {
+            final String toEmail = "jeremy.pugh@adrevolution.com"; // can be any email id 
+            //I'm sending the test to jeremy.pugh@adrevolution.com from jeremy.pugh@adrevolution.com so it doesn't junk
+            sendEmail(establishEmailSession(toEmail), toEmail, "Alert - System Issue", emailText);
+          }//ends if
           } catch (IOException e) {
             //logging to add in future log("Error handling client# " + clientNumber + ": " + e);
           }
@@ -154,20 +155,98 @@ public class MonitorServer3 {
             //regardless of whether an alert email was sent, we want to zero out the healthRemote file
             File fileRemote = new File("C:/Windows/Temp/healthRemote.txt");			
             PrintWriter fileOutputRemote = new PrintWriter(fileRemote);
+            fileOutputRemote.close();
           } catch (IOException e) {
             //logging to add in future log("Error handling client# " + clientNumber + ": " + e);
           }             
 
 
           try {
-            Thread.sleep(600000); //check stats every 10 minutes  
+            Thread.sleep(30000); //check stats every 10 minutes  
           } catch(InterruptedException e) {
             //donothing about it
           }
 
           //spawn a new thread of myself
           new LocalMonitor().start();   
+
       }//ends run method
+
+      //this is to support checks from a file as opposed to hard coded
+      //this code is currently not used
+      public static void readCheckList () {
+        try {
+          File checkListFile = new File("C:/Windows/Temp/checklist.txt");
+          Scanner checkList = new Scanner(checkListFile);
+          
+          String lineItem = "";
+          String ip = "";
+          String port = "";
+          String host = "";
+          int delimiterCount = 0;
+          while (checkList.hasNext()) {
+            lineItem = checkList.next();
+            String[] values = lineItem.split(":", -1);
+            delimiterCount = values.length;
+
+            Scanner item = new Scanner(lineItem);
+            item.useDelimiter(":");
+
+            //parse lines with hostname and IP
+            if (delimiterCount == 2) { 
+              while (item.hasNext()) {
+                host = item.next();
+                ip = item.next();
+                //port = item.next();
+                System.out.println("pinging ip: " + ip + " for host " + host);
+              }//ends inner while
+            }//ends if
+
+            //parse lines with hostname, ip, and port
+            if (delimiterCount == 3) { 
+              while (item.hasNext()) {
+                host = item.next();
+                ip = item.next();
+                port = item.next();
+                if (port != null) {
+                  System.out.println("checking port: " + port + " on ip " + ip + " for host " + host);
+                }
+              }//ends inner while
+            }//ends if
+ 
+          }//ends outer while
+
+          
+          checkList.close();          
+          
+        } catch (IOException e) {
+          System.out.println(e);
+          //logging to add in future log("Error handling client# " + clientNumber + ": " + e);
+        } //ends catch
+      }// ends readCheckList method
+
+      public void runChecks(PrintWriter fileOutput) {
+        Boolean result;
+        result=checkPing("4.34.95.53");
+        fileOutput.print("pinging-main-DB-4.34.95.53,result:");
+        fileOutput.println(result);
+        fileOutput.println("4.34.95.53:8000,result:" + checkPort("4.34.95.53",8000));
+        fileOutput.println("4.34.95.53:10281,result:" + checkPort("4.34.95.53",10281));  
+        fileOutput.println("4.34.95.53:10322,result:" + checkPort("4.34.95.53",10322));
+        fileOutput.println("4.34.95.53:10222,result:" + checkPort("4.34.95.53",10222));
+        fileOutput.println("4.34.95.53:22,result:" + checkPort("4.34.95.53",22));
+        //fileOutput.println("4.34.95.53:333,result:" + checkPort("4.34.95.53",333));
+
+        result=checkPing("4.34.95.51");
+        fileOutput.print("pinging-backup-server-4.34.95.51,result:");
+        fileOutput.println(result);
+        fileOutput.println("4.34.95.51:22,result:" + checkPort("4.34.95.51",22));
+
+        result=checkPing("4.34.95.49");
+        fileOutput.print("pinging-router-GWR3-4.34.95.49,result:");
+        fileOutput.println(result);
+      } //ends runChecks method
+
     }//ends LocalMonitor class
 
 
@@ -187,7 +266,7 @@ public class MonitorServer3 {
           // after every newline.
           BufferedReader in = new BufferedReader(
                  new InputStreamReader(socket.getInputStream()));
-          PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+          //PrintWriter out = new PrintWriter(socket.getOutputStream(), true); //in case I want to tell client something later
           File file = new File("C:/Windows/Temp/healthRemote.txt");			
           PrintWriter fileOutput = new PrintWriter(new FileWriter(file, true));
 
@@ -200,9 +279,11 @@ public class MonitorServer3 {
               break;
             }
             fileOutput.println(input);
-            fileOutput.flush();
-           
+            fileOutput.flush();           
           }// ends while (true)
+  
+          fileOutput.close();
+
         } catch (IOException e) {
           //log("Error handling client# " + clientNumber + ": " + e);
         }finally {
@@ -212,7 +293,7 @@ public class MonitorServer3 {
             //    log("Couldn't close a socket, what's going on?");
           }
             //log("Connection with client# " + clientNumber + " closed");
-        }
+        } //ends finally
       } //ends run method
     }//ends Monitor class
       
@@ -280,6 +361,27 @@ public class MonitorServer3 {
       return false;
     } //ends checkPort method
 
+
+    public static Session establishEmailSession(String toEmail){
+      //this.toEmail = toEmail;
+      final String fromEmail = "jeremy.pugh@adrevolution.com"; //requires valid gmail id, this is monitoring account email address
+      final String password = "CuW<Yuq9"; // correct password for gmail id, this is monitoring account email address
+
+      Properties props = new Properties();
+      props.put("mail.smtp.host", "smtp.gmail.com"); //SMTP Host
+      props.put("mail.smtp.port", "587"); //TLS Port
+      props.put("mail.smtp.auth", "true"); //enable authentication
+      props.put("mail.smtp.starttls.enable", "true"); //enable STARTTLS
+      //create Authenticator object to pass in Session.getInstance argument
+      Authenticator auth = new Authenticator() {
+        //override the getPasswordAuthentication method
+        protected PasswordAuthentication getPasswordAuthentication() {
+          return new PasswordAuthentication(fromEmail, password);
+        }
+      };
+      Session session = Session.getInstance(props, auth);
+      return session;
+    }//ends the establishEmailSession method
 
     public static void sendEmail(Session session, String toEmail, String subject, String body){
       try {
